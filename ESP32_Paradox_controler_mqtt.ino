@@ -12,16 +12,23 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <Wire.h>
+#include <ArduinoJson.h>
 #include <HardwareSerial.h>
 
 HardwareSerial paradoxSerial(2);
 
 const char* ssid = "xxxx";
-const char* password = "xxxxx";
+const char* password = "xxxx";
 #define mqtt_server       "192.168.1.40"
 #define mqtt_port         1883
+
+const char *paradox_topicOut = "domoticz/in";
+const char *paradox_topicStatus = "paradox/status";
+const char *paradox_topicIn = "paradox/in";
+const char *paradoxCmdMsg = "DomParadox_Status";
+
 WiFiClient espClient;
-PubSubClient client(espClient);
+PubSubClient mqtt(espClient);
 
 char inData[38]; // Allocate some space for the string
 byte pindex = 0; // Index into array; where to store the character
@@ -48,6 +55,12 @@ StatusMap[] = {
   { 3, 50 }, //paradox in armed stay mode
   { 4, 40 }  //paradox in armed sleep mode
 };
+
+struct inPayload
+{
+  String Domoticz;
+  String Status;
+} ;
  
 typedef struct {
      byte armstatus;
@@ -60,31 +73,30 @@ typedef struct {
 Payload paradox;
 
 #define LED 13
-
-const char *paradox_topicOut = "domoticz/in";
-const char *paradox_topicStatus = "paradox/status";
-const char *paradox_topicIn = "domoticz/out";
-
 long lastReconnectAttempt = 0;
 
 
 void setup() {
     Serial.begin(115200);
-    debugln("ParadoxController V1.0");
+    debugln(F("ParadoxController V1.0"));
     paradoxSerial.begin(9600);  //paradox serial speed
     paradoxSerial.flush();
     setup_wifi();
-    client.setServer(mqtt_server, mqtt_port);
-    //client.setCallback(callback);
+    mqtt.setServer(mqtt_server, mqtt_port);
+    mqtt.setCallback(callback);
     //connecting to mqtt server
     reconnect();
-    debugln("Setup Done");
+    sendMQTT(paradox_topicStatus,"ParadoxController V1.0");
+    debugln(F("Setup Done"));
 }
  
 void loop()
 {
+  //mqtt.loop();
   readSerial();
-  flushBuffer();
+  if ( (inData[0] & 0xF0)!=0xE0){ // re-align serial buffer
+    paradoxSerial_flush_buffer();
+  }
 }
 
 void setup_wifi() {
@@ -97,38 +109,74 @@ void setup_wifi() {
     delay(500);
     debug(".");
   }
-  debugln("WiFi connected");
-  debug("IP address: ");
+  debugln(F("WiFi connected"));
+  debug(F("IP address: "));
   debugln(WiFi.localIP());
 }
 
-void flushBuffer() {
+void paradoxSerial_flush_buffer(){
   while (paradoxSerial.available()) {
     paradoxSerial.read();
   }
 }
 
-void reconnect() {
+
+void callback(char* topic, byte* payloadmsg, unsigned int length) {
+ 
+  debug("Message arrived in topic: ");
+  debugln(topic);
+ 
+  debug("Message:");
+  for (int i = 0; i < length; i++) {
+    debug((char)payloadmsg[i]);
+  }
+  debugln();
+  debugln("-----------------------");
+
+  char json[length + 1];
+  strncpy (json, (char*)payloadmsg, length);
+  json[length] = '\0';
+  
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject& data = jsonBuffer.parseObject((char*)json);
+
+  // Test if parsing succeeds.
+  if (!data.success()) {
+    debugln(F("parseObject() failed"));
+    sendMQTT(paradox_topicStatus,"Domoticz JSON parseObject() failed.");
+  }else{
+    String Domoticz_status = data["DomParadox_Status"];
+    debugln(Domoticz_status);
+  }
+  
+}
+
+boolean reconnect() {
   // Loop until we're reconnected
-  while (!client.connected()) {
-    debug("Attempting MQTT connection...");
+  while (!mqtt.connected()) {
+    debug(F("Attempting MQTT connection..."));
     // Attempt to connect
-    if (client.connect("ESP8266Client")) {
+    if (mqtt.connect("ESP8266Client")) {
       debugln("connected");
-      // Subscribe
-      client.subscribe("paradox_topicIn");
+      sendMQTT(paradox_topicStatus,"Paradox Connected");    
     } else {
-      debug("failed, rc=");
-      debug(client.state());
-      debugln(" try again in 5 seconds");
+      debug(F("failed, rc="));
+      debug(mqtt.state());
+      debugln(F(" try again in 5 seconds"));
       // Wait 5 seconds before retrying
       delay(5000);
     }
   }
+  // Subscribe
+  mqtt.subscribe(paradox_topicIn);
+  return mqtt.connected();
 }
 
 void readSerial() {
-  while (paradoxSerial.available()<37 )  {} // wait for a serial packet                                   
+  while (paradoxSerial.available()<37 ){
+     mqtt.loop();
+  }
+  // wait for a paradox serial packet                                   
   {
     pindex=0;
     while(pindex < 37) // Paradox packet is 37 bytes 
@@ -150,6 +198,7 @@ void readSerial() {
       SendJsonString(paradox.armstatus, paradox.event, paradox.sub_event, paradox.dummy);
     } 
   }
+ 
 }
 
 int get_Domoticz_Idx(byte Paradox_id)
@@ -214,6 +263,21 @@ void SendJsonString(byte armstatus, byte event,byte sub_event  ,String dummy)
         mqtt_msg = "{ \"command\": \"switchlight\", \"idx\":"+String(get_Domoticz_Idx(11))+",\"nvalue\" : 1, \"switchcmd\": \"Set Level\", \"level\":\""+String(get_Domoticz_Status(sub_event))+"\"}";
       }
       break;
+    case 29:
+      mqtt_msg = "{\"command\" : \"addlogmessage\", \"message\" : \"Paradox armed with user:" + String(dummy)+"\" }";
+      break;
+    case 31:
+      mqtt_msg = "{\"command\" : \"addlogmessage\", \"message\" : \"Paradox disarmed with user:" + String(dummy)+"\" }";
+      break;
+    case 32:
+      mqtt_msg = "{\"command\" : \"addlogmessage\", \"message\" : \"Paradox disarmed after alarm with user:" + String(dummy)+"\" }";
+      break;
+    case 33:
+      mqtt_msg = "{\"command\" : \"addlogmessage\", \"message\" : \"Paradox alarm cancelled with user:" + String(dummy)+"\" }";
+      break;
+    default:
+      mqtt_msg = "{\"command\" : \"addlogmessage\", \"message\" : \"armstatus:" + String(armstatus) + ", event:" + String(event) + ",sub_event:" + String(sub_event) + ", dummy:" + String(dummy)+"\" }";
+      break;
   }
   //passing formated Json string to mqtt function
   if(mqtt_msg.length() > 0){
@@ -223,21 +287,20 @@ void SendJsonString(byte armstatus, byte event,byte sub_event  ,String dummy)
 }
 
 void sendMQTT(String topicNameSend, String dataStr){
-  if (!client.connected()) {
+  if (!mqtt.connected()) {
     reconnect();
   }else {
     // MQTT loop  
-    client.loop();
+    mqtt.loop();
   }
   char topicStrSend[26];
   topicNameSend.toCharArray(topicStrSend,26);
   char dataStrSend[200];
   dataStr.toCharArray(dataStrSend,200);
-  boolean pubresult = client.publish(topicStrSend,dataStrSend);
-  debug("sending ");
+  boolean pubresult = mqtt.publish(topicStrSend,dataStrSend);
+  debug(F("sending "));
   debug(dataStr);
-  debug(" to mqtt topic ");
+  debug(F(" to mqtt topic "));
   debugln(topicNameSend);
 }
-
 
