@@ -17,8 +17,8 @@
 
 HardwareSerial paradoxSerial(2);
 
-const char* ssid = "xxxx";
-const char* password = "xxxx";
+const char* ssid = "Namai40";
+const char* password = "Zygios5505";
 #define mqtt_server       "192.168.1.40"
 #define mqtt_port         1883
 const String ParadoxLoginPassword = "1234";
@@ -42,10 +42,10 @@ const byte ParadoxEntry = 13;
 //-----------------------------;
 const byte DomoticzDisarm = 0;
 const byte DomoticzArm = 10;
-const byte DomoticzStay = 50;
-const byte DomoticzSleep = 40;
-const byte DomoticzExit = 20;
-const byte DomoticzEntry = 30;
+const byte DomoticzStay = 30;
+const byte DomoticzSleep = 20;
+const byte DomoticzExit = 15;
+const byte DomoticzEntry = 17;
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
@@ -62,7 +62,7 @@ IdxMap[] = {
   { 3, 113 },  //living room
   { 4, 108 }, //sleeping romm
   { 10, 114 }, //paradox id is dummy, siren
-  { 11, 41 }  //paradox id is dummy, status like arm, disarm and ect...
+  { 11, 123 }  //paradox id is dummy, status like arm, disarm and ect...
 };
 
 
@@ -266,21 +266,7 @@ void readSerial() {
       String retval = "{ \"armstatus\":" + String(paradox.armstatus) + ", \"event\":" + String(paradox.event) + ", \"sub_event\":" + String(paradox.sub_event) + ", \"dummy\":\"" + String(paradox.dummy) + "\"}";
       debugln(retval);
       //sending parsed data to mqtt server
-      debugln("Running:"+String(ParadoxRunning));
-      debugln("ParadoxConfirStatus:"+String(ParadoxConfirStatus));
-      if(ParadoxRunning == true){
-        if( paradox.event == 2 && paradox.sub_event == ParadoxConfirStatus){
-          ParadoxRunning = false;
-          debugln("Gavome statusa koki siunteme!!!");
-        }else if ( paradox.event == 6 && paradox.sub_event == ParadoxConfirStatus){
-          ParadoxRunning = false;
-          debugln("Paradox is in SLEEP/STAY!!!");
-        }else{
-          debugln("Not sending status to Domoticz");
-        }
-      }else{
-        SendJsonString(paradox.armstatus, paradox.event, paradox.sub_event, paradox.dummy);
-      }
+      SendJsonString(paradox.armstatus, paradox.event, paradox.sub_event, paradox.dummy);
     } 
     if (inData[7] == 48 && inData[8] == 3)
     {
@@ -342,8 +328,11 @@ void SendJsonString(byte armstatus, byte event,byte sub_event  ,String dummy)
       mqtt_msg = "{ \"idx\" : "+String(get_Domoticz_Idx(sub_event))+", \"nvalue\" : "+String(event)+"}";
       break;
     case 2:
-      if(sub_event == ParadoxDisarm || sub_event == ParadoxArm) {
-        mqtt_msg = "{ \"command\": \"switchlight\", \"idx\":"+String(get_Domoticz_Idx(11))+",\"nvalue\" : 1, \"switchcmd\": \"Set Level\", \"level\":\""+String(get_Domoticz_Status(sub_event))+"\"}";
+      if(sub_event == ParadoxDisarm) {
+        //mqtt_msg = "{ \"command\": \"switchlight\", \"idx\":"+String(get_Domoticz_Idx(11))+",\"nvalue\" : 1, \"switchcmd\": \"Set Level\", \"level\":\""+String(get_Domoticz_Status(sub_event))+"\"}";
+        mqtt_msg = "{ \"command\": \"udevice\", \"idx\":"+String(get_Domoticz_Idx(11))+",\"nvalue\" : 0"+",\"svalue\" : \"Disarmed\"}";
+      }else if (sub_event == ParadoxArm) {
+        mqtt_msg = "{ \"command\": \"udevice\", \"idx\":"+String(get_Domoticz_Idx(11))+",\"nvalue\" : 1"+",\"svalue\" : \"Armed Away\"}";
       }
       break;
     case 3:
@@ -357,7 +346,8 @@ void SendJsonString(byte armstatus, byte event,byte sub_event  ,String dummy)
       break;
     case 6:
       if(sub_event == ParadoxStay || sub_event == ParadoxSleep){
-        mqtt_msg = "{ \"command\": \"switchlight\", \"idx\":"+String(get_Domoticz_Idx(11))+",\"nvalue\" : 1, \"switchcmd\": \"Set Level\", \"level\":\""+String(get_Domoticz_Status(sub_event))+"\"}";
+        //mqtt_msg = "{ \"command\": \"switchlight\", \"idx\":"+String(get_Domoticz_Idx(11))+",\"nvalue\" : 1, \"switchcmd\": \"Set Level\", \"level\":\""+String(get_Domoticz_Status(sub_event))+"\"}";
+        mqtt_msg = "{ \"command\": \"udevice\", \"idx\":"+String(get_Domoticz_Idx(11))+",\"nvalue\" : 1"+",\"svalue\" : \"Armed Home\"}";
       }
       break;
     case 29:
@@ -515,8 +505,6 @@ void ExecParadoxCommand(byte Command, byte Subcommand){
   byte checksum;
   byte armdata[MessageLength] = {};
   byte exeSubCommand = Subcommand & 0xFF;
-
-  ParadoxRunning = true;
 
   debugln("Starting ExecParadoxCommand");
   
