@@ -17,9 +17,9 @@
 
 HardwareSerial paradoxSerial(2);
 
-const char* ssid = "Namai40";
-const char* password = "Zygios5505";
-#define mqtt_server       "192.168.1.40"
+const char* ssid = "xxxx";
+const char* password = "xxx";
+#define mqtt_server       "192.168.1.xx"
 #define mqtt_port         1883
 const String ParadoxLoginPassword = "1234";
 
